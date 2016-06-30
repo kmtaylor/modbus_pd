@@ -6,8 +6,8 @@
 #include "modbus-regs.h"
 
 #define MODBUS_DEBUG	TRUE
-#define MODBUS_SLAVE	7
-#define MODBUS_UART	"/dev/ttyACM1"
+#define MODBUS_SLAVE	1
+#define MODBUS_UART	"/dev/ttyACM0"
 
 int main(void) {
     modbus_t *ctx;

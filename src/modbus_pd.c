@@ -14,10 +14,10 @@
 #include "modbus-regs.h"
 
 #define LIST_NGETBYTE 100
-#define ATOMS_ALLOCA(x, n) ((x) = (t_atom *)((n) < LIST_NGETBYTE ?  \
-	alloca((n) * sizeof(t_atom)) : getbytes((n) * sizeof(t_atom))))
-#define ATOMS_FREEA(x, n) ( \
-	((n) < LIST_NGETBYTE || (freebytes((x), (n) * sizeof(t_atom)), 0)))
+#define LIST_ALLOCA(type, x, n) ((x) = (type *)((n) < LIST_NGETBYTE ?  \
+	alloca((n) * sizeof(type)) : getbytes((n) * sizeof(type))))
+#define LIST_FREEA(type, x, n) ( \
+	((n) < LIST_NGETBYTE || (freebytes((x), (n) * sizeof(type)), 0)))
 
 static t_class *modbus_class;
 static t_symbol *recent_tty;
@@ -53,9 +53,8 @@ static void *modbus_class_new(t_floatarg address, t_floatarg first_reg_no,
     return x;
 }
 
-static void modbus_class_float(t_modbus_class *x, t_float f) {
+static void modbus_send(t_modbus_class *x, uint16_t *reg_data) {
     int i;
-    uint16_t reg_data[x->num_regs];
 
     if (!x->ctx) {
 	if (!recent_tty) {
@@ -69,7 +68,6 @@ static void modbus_class_float(t_modbus_class *x, t_float f) {
     modbus_set_slave(x->ctx, x->address);
 
     if (x->last_reg_no) {
-	for (i = 0; i < x->num_regs; i++) reg_data[i] = (uint16_t) f;
 	if (modbus_write_registers(x->ctx, x->first_reg_no, x->num_regs,
 			    reg_data) < 0) {
 	    pd_error(x, "Unable to write multiple registers");
@@ -77,9 +75,29 @@ static void modbus_class_float(t_modbus_class *x, t_float f) {
 	return;
     }
 
-    if (modbus_write_register(x->ctx, x->first_reg_no, (uint16_t) f) < 0) {
+    if (modbus_write_register(x->ctx, x->first_reg_no, reg_data[0]) < 0) {
 	pd_error(x, "Unable to write single register");
     }
+}
+
+static void modbus_class_list(t_modbus_class *x, t_symbol *s,
+		int ac, t_atom *av) {
+    int i;
+    uint16_t *reg_data;
+
+    LIST_ALLOCA(uint16_t, reg_data, x->num_regs);
+
+    for (i = 0; i < x->num_regs; i++) {
+	reg_data[i] = atom_getfloat(av);
+	if (ac > 1) {
+	    ac--;
+	    av++;
+	}
+    }
+
+    modbus_send(x, reg_data);
+
+    LIST_FREEA(uint16_t, reg_data, x->num_regs);
 }
 
 static void modbus_class_bang(t_modbus_class *x) {
@@ -102,11 +120,11 @@ static void modbus_class_bang(t_modbus_class *x) {
 	return;
     }
 
-    ATOMS_ALLOCA(outv, x->num_regs);
+    LIST_ALLOCA(t_atom, outv, x->num_regs);
     for (i = 0; i < x->num_regs; i++)
 	SETFLOAT(outv + i, val[i]);
     outlet_list(x->x_obj.ob_outlet, &s_list, x->num_regs, outv);
-    ATOMS_FREEA(outv, x->num_regs);
+    LIST_FREEA(t_atom, outv, x->num_regs);
 }
 
 static void modbus_class_open(t_modbus_class *x, t_symbol *s) {
@@ -167,8 +185,8 @@ void modbus_setup(void) {
 		    A_DEFFLOAT, A_DEFFLOAT,		/* Class atom type(s) */
 		    A_DEFFLOAT, A_NULL);
 
-    class_addfloat(modbus_class, modbus_class_float);
     class_addbang(modbus_class, modbus_class_bang);
+    class_addlist(modbus_class, modbus_class_list);
 
     class_addmethod(modbus_class, (t_method) modbus_class_open, gensym("open"),
 		    A_SYMBOL, A_NULL);
