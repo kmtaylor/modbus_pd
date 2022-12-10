@@ -30,7 +30,7 @@ int main(void) {
 	exit(EXIT_FAILURE);
     }
 
-    if ((bytes = modbus_report_slave_id(ctx, slave_id)) < 0) {
+    if ((bytes = modbus_report_slave_id(ctx, MODBUS_RTU_MAX_ADU_LENGTH, slave_id)) < 0) {
 	fprintf(stderr, "Unable to read slave ID\n");
 	exit(EXIT_FAILURE);
     }

@@ -15,9 +15,9 @@
 
 #define LIST_NGETBYTE 100
 #define LIST_ALLOCA(type, x, n) ((x) = (type *)((n) < LIST_NGETBYTE ?  \
-	alloca((n) * sizeof(type)) : getbytes((n) * sizeof(type))))
+        alloca((n) * sizeof(type)) : getbytes((n) * sizeof(type))))
 #define LIST_FREEA(type, x, n) ( \
-	((n) < LIST_NGETBYTE || (freebytes((x), (n) * sizeof(type)), 0)))
+        ((n) < LIST_NGETBYTE || (freebytes((x), (n) * sizeof(type)), 0)))
 
 static t_class *modbus_class;
 static t_symbol *recent_tty;
@@ -32,21 +32,28 @@ typedef struct {
 
     uint8_t address;
     uint16_t first_reg_no;
-    uint16_t last_reg_no;
+    uint16_t read_type;
     int num_regs;
 } t_modbus_class;
 
 static void *modbus_class_new(t_floatarg address, t_floatarg first_reg_no,
-		t_floatarg last_reg_no) {
+                t_floatarg last_reg_no, t_floatarg read_type) {
     t_modbus_class *x = (t_modbus_class *) pd_new(modbus_class);
+    int16_t last_reg = (int16_t) last_reg_no;
 
     x->tty = NULL;
     x->ctx = NULL;
     x->baud = 115200;
     x->address = (uint16_t) address;
     x->first_reg_no = (uint16_t) first_reg_no;
-    x->last_reg_no = (uint16_t) last_reg_no;
-    x->num_regs = x->last_reg_no ? x->last_reg_no - x->first_reg_no + 1 : 1;
+    x->read_type = (uint16_t) read_type;
+
+    if (last_reg > 0)
+        x->num_regs = last_reg - x->first_reg_no + 1;
+    else if (last_reg < 0)
+        x->num_regs = -last_reg;
+    else
+        x->num_regs = 1;
 
     outlet_new(&x->x_obj, &s_list);
 
@@ -57,42 +64,42 @@ static void modbus_send(t_modbus_class *x, uint16_t *reg_data) {
     int i;
 
     if (!x->ctx) {
-	if (!recent_tty) {
-	    pd_error(x, "Modbus port not open");
-	    return;
-	}
-	post("Modbus port not open, using most recent TTY");
-	x->ctx = (modbus_t *) recent_tty->s_thing;
+        if (!recent_tty) {
+            pd_error(x, "Modbus port not open");
+            return;
+        }
+        post("Modbus port not open, using most recent TTY");
+        x->ctx = (modbus_t *) recent_tty->s_thing;
     }
 
     modbus_set_slave(x->ctx, x->address);
 
-    if (x->last_reg_no) {
-	if (modbus_write_registers(x->ctx, x->first_reg_no, x->num_regs,
-			    reg_data) < 0) {
-	    pd_error(x, "Unable to write multiple registers");
-	}
-	return;
+    if (x->num_regs != 1) {
+        if (modbus_write_registers(x->ctx, x->first_reg_no, x->num_regs,
+                            reg_data) < 0) {
+            pd_error(x, "Unable to write multiple registers");
+        }
+        return;
     }
 
     if (modbus_write_register(x->ctx, x->first_reg_no, reg_data[0]) < 0) {
-	pd_error(x, "Unable to write single register");
+        pd_error(x, "Unable to write single register");
     }
 }
 
 static void modbus_class_list(t_modbus_class *x, t_symbol *s,
-		int ac, t_atom *av) {
+                int ac, t_atom *av) {
     int i;
     uint16_t *reg_data;
 
     LIST_ALLOCA(uint16_t, reg_data, x->num_regs);
 
     for (i = 0; i < x->num_regs; i++) {
-	reg_data[i] = atom_getfloat(av);
-	if (ac > 1) {
-	    ac--;
-	    av++;
-	}
+        reg_data[i] = atom_getfloat(av);
+        if (ac > 1) {
+            ac--;
+            av++;
+        }
     }
 
     modbus_send(x, reg_data);
@@ -106,23 +113,32 @@ static void modbus_class_bang(t_modbus_class *x) {
     int i;
 
     if (!x->ctx) {
-	if (!recent_tty) {
-	    pd_error(x, "Modbus port not open");
-	    return;
-	}
-	post("Modbus port not open, using most recent TTY");
-	x->ctx = (modbus_t *) recent_tty->s_thing;
+        if (!recent_tty) {
+            pd_error(x, "Modbus port not open");
+            return;
+        }
+        post("Modbus port not open, using most recent TTY");
+        x->ctx = (modbus_t *) recent_tty->s_thing;
     }
 
     modbus_set_slave(x->ctx, x->address);
-    if (modbus_read_registers(x->ctx, x->first_reg_no, x->num_regs, val) < 0) {
-	pd_error(x, "Unimplemented register");
-	return;
+    if (x->read_type == MODBUS_FC_READ_INPUT_REGISTERS) {
+        if (modbus_read_input_registers(
+                    x->ctx, x->first_reg_no, x->num_regs, val) < 0) {
+            pd_error(x, "Unimplemented register");
+            return;
+        }
+    } else {
+        if (modbus_read_registers(
+                    x->ctx, x->first_reg_no, x->num_regs, val) < 0) {
+            pd_error(x, "Unimplemented register");
+            return;
+        }
     }
 
     LIST_ALLOCA(t_atom, outv, x->num_regs);
     for (i = 0; i < x->num_regs; i++)
-	SETFLOAT(outv + i, val[i]);
+        SETFLOAT(outv + i, val[i]);
     outlet_list(x->x_obj.ob_outlet, &s_list, x->num_regs, outv);
     LIST_FREEA(t_atom, outv, x->num_regs);
 }
@@ -133,35 +149,35 @@ static void modbus_class_open(t_modbus_class *x, t_symbol *s) {
     uint16_t version[MB_VERSION_REGS];
 
     if (s->s_thing) {
-	post("TTY already open");
-	x->ctx = (modbus_t *) s->s_thing;
+        post("TTY already open");
+        x->ctx = (modbus_t *) s->s_thing;
     } else {
-	post("Opening modbus TTY %s", s->s_name);
+        post("Opening modbus TTY %s", s->s_name);
     
-	if (!(x->ctx = modbus_new_rtu(s->s_name, x->baud, 'N', 8, 1))) {
-	    pd_error(x, "Error initialising modbus library");
-	    return;
-	}
+        if (!(x->ctx = modbus_new_rtu(s->s_name, x->baud, 'N', 8, 1))) {
+            pd_error(x, "Error initialising modbus library");
+            return;
+        }
 
-	if (modbus_connect(x->ctx) < 0) {
-	    pd_error(x, "Unable to open serial port:");
-	    return;
-	}
+        if (modbus_connect(x->ctx) < 0) {
+            pd_error(x, "Unable to open serial port:");
+            return;
+        }
 
-	s->s_thing = (void *) x->ctx;
-	recent_tty = s;
+        s->s_thing = (void *) x->ctx;
+        recent_tty = s;
     }
 
     modbus_set_slave(x->ctx, x->address);
-    if (modbus_report_slave_id(x->ctx, slave_id) < 0) {
-	pd_error(x, "Unable to retrieve ID string");
-	return;
+    if (modbus_report_slave_id(x->ctx, MODBUS_RTU_MAX_ADU_LENGTH, slave_id) < 0) {
+        pd_error(x, "Unable to retrieve ID string");
+        return;
     }
 
     if (modbus_read_registers(x->ctx,
-			    MB_VERSION, MB_VERSION_REGS, version) < 0) {
-	pd_error(x, "Unable to retrieve version number");
-	return;
+                            MB_VERSION, MB_VERSION_REGS, version) < 0) {
+        pd_error(x, "Unable to retrieve version number");
+        return;
     }
 
     post("Slave ID: %s", &slave_id[2]);
@@ -178,18 +194,18 @@ static void modbus_class_free(t_modbus_class *x) {
 
 void modbus_setup(void) {
     modbus_class = class_new(gensym("modbus"),
-		    (t_newmethod) modbus_class_new,	/* Class constructor */
-		    (t_method) modbus_class_free,	/* Class destructor */
-		    sizeof(t_modbus_class),		/* Class data space */
-		    CLASS_DEFAULT,			/* Class flags */
-		    A_DEFFLOAT, A_DEFFLOAT,		/* Class atom type(s) */
-		    A_DEFFLOAT, A_NULL);
+                    (t_newmethod) modbus_class_new,     /* Class constructor */
+                    (t_method) modbus_class_free,       /* Class destructor */
+                    sizeof(t_modbus_class),             /* Class data space */
+                    CLASS_DEFAULT,                      /* Class flags */
+                    A_DEFFLOAT, A_DEFFLOAT,             /* Class atom type(s) */
+                    A_DEFFLOAT, A_DEFFLOAT, A_NULL);
 
     class_addbang(modbus_class, modbus_class_bang);
     class_addlist(modbus_class, modbus_class_list);
 
     class_addmethod(modbus_class, (t_method) modbus_class_open, gensym("open"),
-		    A_SYMBOL, A_NULL);
+                    A_SYMBOL, A_NULL);
     class_addmethod(modbus_class, (t_method) modbus_class_baud, gensym("baud"),
-		    A_FLOAT, A_NULL);
+                    A_FLOAT, A_NULL);
 }
